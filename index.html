@@ -1,0 +1,574 @@
+<html>
+<head>
+  <style>
+      #boxes{
+      content: "";
+      display: table;
+      clear: both;
+      }
+      #legend{
+      float:left;
+      height:550px;
+      width:400px;
+      padding:0 10px;
+      }
+      #sim{
+      float:left;
+      height:550px;
+      width:800px;
+      padding:0 10px;
+      }
+    </style>
+</head>
+
+<body>
+
+<main id="boxes">
+
+
+<div id="legend">
+  <image src="img/legend.png" style="height:500px;">
+</div>
+<div id="sim">
+  Social Distancing: <input type="range" id="socialDist" size="4" min="0" max="100" value="2"></input>
+  Incubation Period: <input id="incPeriod" size="4" value="5.5"></input>
+  Contagious Period: <input id="contPeriod" size="4" value="14"></input>
+  <button onclick="runSim()">Run Sim</button>
+    <canvas id="myCanvas" width="800" height="400" style="border:1px solid #d3d3d3;"></canvas>
+
+
+    <canvas id="plots" width="800" height="100" style="border:1px solid #d3d3d3;"></canvas>
+
+</div>
+
+<div style="display:inline;">
+  Number of Points: <p id="nPoints">200</p>
+  Healthy: <p id="nHealthy">200</p>
+  Contagious: <p id="nContagious">0</p>
+  Hospitalized: <p id ="nHospitalized">0</p>
+  Dead: <p id="nDead">0</p>
+  Recovered: <p id="nRecovered">0</p>
+</div>
+</main>
+</body>
+
+<script>
+
+var canvas = document.getElementById("myCanvas");
+var canvasWidth = canvas.width;
+var canvasHeight = canvas.height;
+var ctx = canvas.getContext("2d");
+var canvasData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+
+var plotcanvas = document.getElementById("plots");
+var plotcanvasWidth = plotcanvas.width;
+var plotcanvasHeight = plotcanvas.height;
+var plotctx = plotcanvas.getContext("2d");
+
+
+var currtime = 0;
+var timerInterval = 100; //msec
+var pointData = [];
+var conditionQtys = [0,0,0,0,0,0];
+var incubationPeriod = 5.5; // days
+var sickTime = 10;  //days
+var percentAsym = 0.2;
+var percentMildSym = 0.6;
+var percentSevereSym = 0.2;
+var percentFatal = 0.03;
+var socialDistFactor = 2;
+var nPoints = 300;
+var myVar;
+var simSpeed=2;
+var deltat = 0;
+
+function runSim() {
+
+
+// code based on https://www.washingtonpost.com/graphics/2020/world/corona-simulator/?fbclid=IwAR3IqNSh0g3brjlD2O0gh0Tbl-u69_Is8o2Kb8BluE2MEj_2U-VQGA1qpf0&utm_campaign=wp_main&utm_medium=social&utm_source=facebook
+
+  clearTimeout(myVar);
+  currtime = 0;
+  timerInterval = 50; //msec
+  pointData = []; //xpos,ypos,xvel,yvel,condition,infecttime
+  conditionQtys = [0,0,0,0,0,0];
+  incubationPeriod = document.getElementById("incPeriod").value; // days
+  sickTime  = document.getElementById("contPeriod").value;   //days
+  percentAsym = 0.2;
+  percentMildSym = 0.6;
+  percentSevereSym = 0.2;
+  percentFatal = 0.03;
+  nPoints  = document.getElementById("nPoints").innerHTML;
+  socialDistFactor = document.getElementById("socialDist").value/100;
+
+  //simSpeed = 10/socialDistFactor;
+
+  simSpeed = 1;
+  deltat = 5*timerInterval/100;
+  plotctx.clearRect(0, 0, plotcanvas.width, plotcanvas.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  //select initial point locations and velocities
+  selectPoints(nPoints);
+  //infect 1 point
+  infectPoint(0);
+  infectPoint(1);
+  infectPoint(2);
+
+  //draw initial points
+  drawPoints();
+  //turn on timer to update point locations
+  myVar = setInterval(myTimer, timerInterval);
+
+}
+
+
+function myTimer() {
+
+  currtime = currtime + timerInterval/1000;  //time in seconds
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  checkCondition(); //checks to see if condition has changed (i.e. sick to hospitalized)
+  movePoints(deltat);
+  conditionQtys = conditionCounts();
+  plotConditions();
+  updateConditionValues();
+  //console.table(pointData);
+  drawPoints();
+  //console.table(pointData)
+
+}
+
+function updateConditionValues() {
+  document.getElementById("nHealthy").innerHTML = conditionQtys[0];
+  document.getElementById("nContagious").innerHTML = conditionQtys[1]+conditionQtys[2]+conditionQtys[3];
+  document.getElementById("nHospitalized").innerHTML = conditionQtys[3];
+  document.getElementById("nDead").innerHTML = conditionQtys[4];
+  document.getElementById("nRecovered").innerHTML = conditionQtys[5];
+}
+
+function conditionCounts() {
+
+  out = [0,0,0,0,0,0];
+  for (var ii = 0;ii<pointData.length;ii++) {
+    tmpcon = pointData[ii][4] - 1;
+    out[tmpcon] = out[tmpcon] +1;
+  }
+  return(out);
+
+
+
+}
+
+
+function setDirection(ii) {
+  //sets a velocity in a random direction with magnitude of 1
+  pointData[ii][2] = (Math.random()-0.5); //velocity X
+  pointData[ii][3] = (Math.random()-0.5); //velocity Y
+  setVelocity(ii);
+}
+
+function setVelocity(ii) {
+  //sets the velocity to the correct speed for the condition of this point
+  var speed = Math.sqrt(Math.pow(pointData[ii][2],2)+Math.pow(pointData[ii][3],2));
+  if (speed > 0) {
+    pointData[ii][2] = pointData[ii][2] * getSpeed(ii)/speed;
+    pointData[ii][3] = pointData[ii][3] * getSpeed(ii)/speed;
+  }
+  else {
+    setDirection(ii);
+  }
+}
+
+
+function checkCondition() {
+  //checks timing data to see if the point condition has changed
+  for(var ii=0;ii<pointData.length;ii++) {
+
+    // if during incubation period
+    if (pointData[ii][5] == 1 && pointData[ii][6] == 0) {
+      if ((currtime - pointData[ii][7]) > incubationPeriod) {
+        displaySymptoms(ii);
+        pointData[ii][6] = 1;
+        setVelocity(ii);
+      }
+    }
+    else if (pointData[ii][5] == 1 && pointData[ii][6] == 1) { // patient is infected and symptomatic
+      if ((currtime - pointData[ii][7]) > sickTime) {
+        switch(pointData[ii][4]) {
+          case 2:
+          pointData[ii][4] = 6;
+          pointData[ii][5] = 0;
+          pointData[ii][6] = 0;
+          setVelocity(ii);
+          break;
+          case 3:
+          pointData[ii][4] = 6;
+          pointData[ii][5] = 0;
+          pointData[ii][6] = 0;
+          setVelocity(ii);
+          break;
+          case 4:
+          if (isCaseFatal(ii)) {
+            pointData[ii][4] = 5;
+            pointData[ii][5] = 0;
+            pointData[ii][6] = 0;
+          }
+          else {
+            pointData[ii][4] = 6;
+            pointData[ii][5] = 0;
+            pointData[ii][6] = 0;
+          }
+          setVelocity(ii);
+          break;
+        }
+      }
+    }
+  }
+}
+
+function isCaseFatal(ii) {
+  var randvar = Math.random();
+  if (randvar < percentFatal/percentSevereSym) {
+    return(1);
+  }
+  return (0);
+
+}
+function infectPoint(ii) {
+
+  //time tag change
+  pointData[ii][7] = currtime;
+  pointData[ii][5] = 1; //point is infected
+  pointData[ii][4] = 2; // condition is asymptomatic
+  //1 = healthy, 2=carrier(asymptomatic), 3=carrier(symptomatic), 4=hospitalized, 5=dead, 6=recovered
+}
+
+function displaySymptoms(ii) {
+  //pointData[ii][5] = currtime;
+  var randvar = Math.random();
+  if (randvar <= percentAsym) {
+    pointData[ii][4] = 2; //no symptoms
+  }
+  else if (randvar > (1-percentSevereSym)) {
+    pointData[ii][4] = 4; //severe = hospitalized
+  }
+  else {
+    pointData[ii][4] = 3; //mild symptoms
+  }
+  //1 = healthy, 2=carrier(asymptomatic), 3=carrier(symptomatic), 4=hospitalized, 5=dead, 6=recovered
+}
+
+function movePoints(deltat) {
+
+  for(var ii=0;ii<pointData.length;ii++) {
+    updateLoc(ii,deltat);
+  }
+
+  //check for collisions
+  for(var ii=0;ii<pointData.length-1;ii++) {
+    for(var jj=ii+1;jj<pointData.length;jj++) {
+      if (resolveCollision(ii,jj)) {
+        updateLoc(ii,deltat);
+        updateLoc(jj,deltat);
+        if (isContagious(ii)==true && isHealthy(jj)==true) {
+          infectPoint(jj);
+        }
+        else if (isContagious(jj)==true && isHealthy(ii)==true) {
+          infectPoint(ii);
+        }
+      }
+    }
+  }
+
+}
+
+function isContagious(ii) {
+
+  if(pointData[ii][4] == 2 || pointData[ii][4] == 3 ||pointData[ii][4] == 4) {
+    return(true);
+  }
+  else {
+    return(false);
+  }
+
+}
+
+function isHealthy(ii) {
+  return (pointData[ii][4]==1)
+}
+
+function isInfected(ii) {
+
+  return (isContagious(ii));
+
+}
+
+function updateLoc(ii,deltat,c) {
+  var xVel = pointData[ii][2];
+  var deltaX = xVel*deltat;
+  var yVel = pointData[ii][3];
+  var deltaY = yVel*deltat;
+  var newX = pointData[ii][0] + deltaX;
+  var newY = pointData[ii][1] + deltaY;
+
+  if (newX >= canvasWidth-5 || newX <= 5) {
+    pointData[ii][2] = -pointData[ii][2];
+    xVel = pointData[ii][2];
+    deltaX = xVel*deltat;
+    newX = pointData[ii][0] + deltaX;
+  }
+  else if (newY >= canvasHeight-5 || newY <= 5) {
+    pointData[ii][3] = -pointData[ii][3];
+    yVel = pointData[ii][3];
+    deltaY = yVel*deltat;
+    newY = pointData[ii][1] + deltaY;
+  }
+  pointData[ii][0] = newX;
+  pointData[ii][1] = newY;
+
+}
+
+function getMass(ii){
+  var mass = 1;
+  if (pointData[ii][8] == 1) {
+    return (100000000);
+  }
+  switch(pointData[ii][4]) {
+    case 1:
+    mass = 1;
+    break;
+    case 2:
+    mass = 1;
+    break;
+    case 3:
+    mass = 10000;
+    break;
+    case 4:
+    mass = 100000000;
+    break;
+    case 5:
+    mass = 10000000;
+    break;
+    case 6:
+    mass = 1;
+    break;
+  }
+  return(mass)
+}
+
+function getSpeed(ii){
+
+  if (pointData[ii][8] == 1) {
+    return (0);
+  }
+  var speed = simSpeed;
+  switch(pointData[ii][4]) {
+    case 1:
+    speed = simSpeed;
+    break;
+    case 2:
+    speed = simSpeed;
+    break;
+    case 3:
+    speed = 0.1;
+    break;
+    case 4:
+    speed = 0.01;
+    break;
+    case 5:
+    speed = 0;
+    break;
+    case 6:
+    speed = simSpeed;
+    break;
+  }
+  return(speed)
+}
+
+function resolveCollision(a,b) {
+
+
+      /*
+      if (pointData[a][4]==5 || pointData[b][4]==5) { //if 1 is dead, do nothing
+        return (0);
+      }
+      */
+
+
+      var mass_a = getMass(a);
+      var mass_b = getMass(b);
+
+      var collision = [pointData[a][0]-pointData[b][0] , pointData[a][1]-pointData[b][1] ];  //= a.position() - b.position();
+
+      var distance = Math.sqrt(Math.pow(pointData[a][0]-pointData[b][0],2) + Math.pow(pointData[a][1]-pointData[b][1],2));
+      if (distance == 0.0) {              // hack to avoid div by zero
+          collision = [1.0, 0.0];
+          distance = 1.0;
+      }
+      if (distance > 10.2)
+          return(0);
+
+      // Get the components of the velocity vectors which are parallel to the collision.
+      // The perpendicular component remains the same for both fish
+      collision[0] = collision[0] / distance;
+      collision[1] = collision[1] / distance;
+      var aci = pointData[a][2]*collision[0] + pointData[a][3]*collision[1];
+      var bci = pointData[b][2]*collision[0] + pointData[b][3]*collision[1];
+      //double aci = a.velocity().dot(collision);
+      //double bci = b.velocity().dot(collision);
+
+      var acf = (mass_a - mass_b)/(mass_a+mass_b)*aci + (2*mass_b)/(mass_a+mass_b)*bci;
+      var bcf = (2*mass_a)/(mass_a+mass_b)*aci + (mass_b-mass_a)/(mass_a+mass_b)*bci;
+      // Solve for the new velocities using the 1-dimensional elastic collision equations.
+      // Turns out it's really simple when the masses are the same.
+      //double acf = bci;
+      //double bcf = aci;
+
+      // Replace the collision velocity components with the new ones
+      pointData[a][2] = pointData[a][2] + (acf - aci) * collision[0];
+      pointData[a][3] = pointData[a][3] + (acf - aci) * collision[1];
+      pointData[b][2] = pointData[b][2] + (bcf - bci) * collision[0];
+      pointData[b][3] = pointData[b][3] + (bcf - bci) * collision[1];
+      //a.velocity() += (acf - aci) * collision;
+      //b.velocity() += (bcf - bci) * collision;
+
+      return(1)
+
+
+}
+function selectPoints(nPoints) {
+
+  //console.log(canvasWidth)
+  for(var ii=0;ii<nPoints;ii++) {
+    pointData[ii] = [];
+    setRandomLocation(ii);
+    pointData[ii][4] = 1; //state 1=healthy,2=incubated,3=mildsym, 4=severesym, 5=dead, 6=recovered
+    pointData[ii][5] = 0; //infected or not
+    pointData[ii][6] = 0; //symptoms showing or not
+    pointData[ii][7] = 0; //time tag of infection
+    pointData[ii][8] = isPointStatic(ii);
+    setDirection(ii);
+  }
+
+}
+
+function distance(ii,jj) {
+  return(Math.sqrt((Math.pow((pointData[ii][0]-pointData[jj][0]),2))+(Math.pow((pointData[ii][1]-pointData[jj][1]),2))))
+}
+
+function setRandomLocation(ii) {
+
+  var tmpX,tmpY;
+  tmpX = (canvasWidth-10) * Math.random() + 5; //position X
+  tmpY = (canvasHeight-10) * Math.random() + 5; //position X
+  pointData[ii][0] = tmpX; //position X
+  pointData[ii][1] = tmpY;  //position Y
+
+  var tooClose = true;
+
+  while (tooClose==true) {
+    tooClose = false;
+    for(var jj=0;jj<ii;jj++) {
+      if (distance(ii,jj) <=15) {
+        tooClose = true;
+      }
+    }
+    if (tooClose == true) {
+      tmpX = (canvasWidth-10) * Math.random() + 5; //position X
+      tmpY = (canvasHeight-10) * Math.random() + 5; //position X
+      pointData[ii][0] = tmpX; //position X
+      pointData[ii][1] = tmpY;  //position Y
+    }
+  }
+
+}
+function isPointStatic(ii) {
+  if (Math.random() < socialDistFactor) {
+    return (1);
+  }
+  return(0);
+}
+
+function drawPoints() {
+  for(var ii=0;ii<pointData.length;ii++) {
+    drawPoint(pointData[ii][0],pointData[ii][1],pointData[ii][4])
+  }
+}
+
+
+function drawPoint(x,y,val) {
+
+  //console.log(x,y,val)
+
+  var r = 5;
+  var cStr = selectColor(val);
+
+  ctx.beginPath();
+  ctx.fillStyle = cStr;
+  ctx.arc(x, y, r, 0, 2 * Math.PI);
+  ctx.fill();
+
+
+}
+
+function selectColor(condition) {
+
+  var cStr = "#FF0000";
+
+  switch (condition) {
+    case 1: //healthy
+    cStr = "#0000FF"; //blue
+    break;
+    case 2:  //infected but asymptomatic
+    cStr = "#FF00FF"; //magenta
+    break;
+    case 3: //infected with symptoms
+    cStr = "#770000"; //maroon
+    break;
+    case 4: //severe (hospitalized)
+    cStr = "#FF0000"; //RED
+    break;
+    case 5: //dead
+    cStr = "#AAAAAA"; //grey
+    break;
+    case 6: //recovered
+    cStr = "#00FF00"; //green
+  }
+
+  return (cStr);
+}
+
+function plotConditions() {
+
+  var scalingFactor = plotcanvasHeight/nPoints;
+  var x1 = currtime*20;
+  var x2 = currtime*20;
+  var y1 = 0;
+  var y2 = conditionQtys[5]*scalingFactor;
+  var cStr = selectColor(6);
+  plotctx.beginPath();
+  plotctx.strokeStyle = cStr;
+  plotctx.moveTo(x1,y1)
+  plotctx.lineTo(x2,y2);
+  plotctx.stroke();
+  plotctx.lineWidth = 4;
+
+  for (var ii=0;ii<conditionQtys.length-1;ii++) {
+
+
+    y1 = y2;
+    y2 = y1+conditionQtys[ii]*scalingFactor;
+    var cStr = selectColor(ii+1);
+    plotctx.beginPath();
+    plotctx.strokeStyle = cStr;
+    plotctx.moveTo(x1,y1)
+    plotctx.lineTo(x2,y2);
+    plotctx.stroke();
+    plotctx.lineWidth = 4;
+  }
+
+}
+
+</script>
+
+</html>
